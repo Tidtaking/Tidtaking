@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="no">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tidtaking for Ski-konkurranser</title>
+  <style>
+    body { font-family: Arial, sans-serif; text-align: center; padding: 10px; }
+    button, input, select { font-size: 14px; margin: 5px; padding: 8px; width: 90%; max-width: 400px; }
+    table { margin: 10px auto; border-collapse: collapse; width: 100%; overflow-x: auto; display: block; }
+    th, td { border: 1px solid #ccc; padding: 4px; font-size: 12px; }
+    th { background-color: #f4f4f4; }
+    .btn-lap { background-color: #3498db; color: white; }
+    .btn-finish { background-color: #27ae60; color: white; }
+    .btn-start { background-color: #e67e22; color: white; }
+    .target { font-size: 28px; cursor: pointer; }
+    .shooting { background-color: gray; }
+    #liveClock { font-size: 18px; font-weight: bold; margin-bottom: 10px; }
+    dialog {
+      border: none;
+      border-radius: 5px;
+      padding: 20px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.5);
+    }
+    dialog::backdrop { background: rgba(0, 0, 0, 0.5); }
+    @media (max-width: 600px) {
+      table, th, td { font-size: 10px; }
+      .target { font-size: 24px; }
+      #liveClock { font-size: 14px; }
+    }
+  </style>
+  <!-- Last Supabase‑JS v1.35.6 -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@1.35.6/dist/supabase.min.js"></script>
+</head>
+<body>
+  <h2>Tidtaking for Ski-konkurranser</h2>
+  <div id="liveClock"></div>
+  
+  <div>
+    <input type="number" id="newStartNumber" placeholder="Startnummer">
+    <input type="text" id="newParticipant" placeholder="Navn">
+    <select id="newParticipantClass">
+      <option value="">Velg klasse...</option>
+      <option value="G10 Nybeg og yngre">G10 Nybeg og yngre</option>
+      <option value="K19">K19</option>
+      <option value="J16">J16</option>
+      <option value="K17">K17</option>
+      <option value="M18">M18</option>
+      <option value="M19">M19</option>
+      <option value="K18">K18</option>
+      <option value="G14">G14</option>
+      <option value="G11-12 Nybeg">G11-12 Nybeg</option>
+      <option value="J11">J11</option>
+      <option value="G12">G12</option>
+      <option value="G13">G13</option>
+      <option value="J10 Nybeg og yngre">J10 Nybeg og yngre</option>
+      <option value="J11-12 Nybeg">J11-12 Nybeg</option>
+      <option value="G11">G11</option>
+      <option value="J12">J12</option>
+      <option value="J13">J13</option>
+      <option value="J14">J14</option>
+      <option value="G15">G15</option>
+      <option value="G16">G16</option>
+      <option value="M17">M17</option>
+    </select>
+    <button onclick="addParticipant()">Lagre deltaker</button>
+    <br>
+    <label>Tilleggstid pr bom (sek): </label>
+    <input type="number" id="penaltyTime" value="30">
+    <br>
+    <input type="time" id="firstStartTime" placeholder="Første starttid" step="1">
+    <input type="number" id="startInterval" placeholder="Intervall (sek)" value="30">
+    <button onclick="assignStartTimes()">Tildel starttider</button>
+    <br>
+    <button onclick="customResetAll()" style="background-color: red; color: white;">Nullstill Alt</button>
+    <button onclick="saveCSV()" style="background-color: #555; color: white;">Lagre CSV</button>
+    <button onclick="startMass()" style="background-color: #444; color: white;">Fellesstart</button>
+  </div>
+  
+  <div style="overflow-x:auto;">
+    <table>
+      <thead>
+        <tr>
+          <th>Plass</th>
+          <th>Start</th>
+          <th>#</th>
+          <th>Navn</th>
+          <th>Kl.</th>
+          <th>Status</th>
+          <th>Tid</th>
+          <th>S1</th>
+          <th>S2</th>
+          <th>Bom</th>
+          <th>Rundetider (Diff)</th>
+          <th>Mål (Diff)</th>
+          <th>Handl.</th>
+        </tr>
+      </thead>
+      <tbody id="results"></tbody>
+    </table>
+  </div>
+  
+  <dialog id="confirmDialog">
+    <p id="confirmText">Er du sikker på at du vil nullstille alt?</p>
+    <button onclick="confirmOk()">OK</button>
+    <button onclick="confirmCancel()">Avbryt</button>
+  </dialog>
+  
+  <script>
+    // Vent til vinduet er lastet slik at Supabase er definert
+    window.onload = async function() {
+      // Opprett supabaseClient med din nøkkel
+      const supabaseUrl = "https://chzfewhbfkdtcizdxyzk.supabase.co";
+      const supabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNoemZld2hiZmtkdGNpemR4eXprIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDI2NDE1ODgsImV4cCI6MjA1ODIxNzU4OH0.RKgK8b1PHl9ZbFj57u_rD34e53Zlk3sGPHUru9KmuqA";
+      window.supabaseClient = supabase.createClient(supabaseUrl, supabaseKey);
+      console.log("Supabase-klient opprettet:", window.supabaseClient);
+
+      // Globalt deltakerobjekt
+      window.participants = {};
+
+      // Hjelpefunksjoner
+      window.getShootingArray = function(p) {
+        if (Array.isArray(p.shooting)) return p.shooting;
+        if (typeof p.shooting === "string") {
+          try {
+            return JSON.parse(p.shooting.trim());
+          } catch (e) {
+            console.error("Kunne ikke parse shooting for snr", p.snr, p.shooting, e);
+            return [Array(5).fill(false), Array(5).fill(false)];
+          }
+        }
+        return [Array(5).fill(false), Array(5).fill(false)];
+      };
+
+      window.formatTime = function(sec) {
+        const min = Math.floor(sec / 60);
+        const s = (sec % 60).toFixed(1);
+        return min > 0 ? `${min}m ${s}s` : `${s}s`;
+      };
+
+      window.formatClockTimeFull = function(ms) {
+        const d = new Date(ms);
+        const h = d.getHours().toString().padStart(2, "0");
+        const m = d.getMinutes().toString().padStart(2, "0");
+        const s = d.getSeconds().toString().padStart(2, "0");
+        return `${h}:${m}:${s}`;
+      };
+
+      window.customConfirm = function(message) {
+        return new Promise((resolve) => {
+          const dialog = document.getElementById("confirmDialog");
+          document.getElementById("confirmText").textContent = message;
+          dialog.showModal();
+          window.confirmOk = function() { dialog.close(); resolve(true); }
+          window.confirmCancel = function() { dialog.close(); resolve(false); }
+        });
+      };
+
+      // Funksjoner for databaseoperasjoner og visning
+      async function fetchRemoteData() {
+        const { data, error } = await supabaseClient.from("participants").select("*");
+        if (error) {
+          console.error("Feil ved henting av deltakere:", error);
+          return;
+        }
+        data.forEach(record => {
+          record.laps = record.laps || [];
+          record.shooting = (typeof record.shooting === "string")
+            ? JSON.parse(record.shooting)
+            : record.shooting || [Array(5).fill(false), Array(5).fill(false)];
+          participants[record.snr] = record;
+        });
+      }
+
+      function updateLocalDisplay() {
+        let overallBestFinish = Infinity;
+        Object.values(participants).forEach(p => {
+          if (p.finish != null && p.finish < overallBestFinish) {
+            overallBestFinish = p.finish;
+          }
+        });
+        let maxLaps = 0;
+        Object.values(participants).forEach(p => {
+          if (p.laps.length > maxLaps) maxLaps = p.laps.length;
+        });
+        let bestLapTimes = Array(maxLaps).fill(Infinity);
+        Object.values(participants).forEach(p => {
+          p.laps.forEach((lap, i) => { if (lap < bestLapTimes[i]) bestLapTimes[i] = lap; });
+        });
+        let classPlacements = {};
+        Object.entries(participants).forEach(([snr, p]) => {
+          if (p.finish != null) {
+            if (!classPlacements[p.class]) classPlacements[p.class] = [];
+            classPlacements[p.class].push({ snr: snr, finish: p.finish });
+          }
+        });
+        for (const cls in classPlacements) {
+          classPlacements[cls].sort((a, b) => a.finish - b.finish);
+          classPlacements[cls].forEach((entry, i) => { entry.rank = i + 1; });
+        }
+        
+        let rows = [];
+        if (Object.keys(participants).length === 0) {
+          rows.push("<tr><td colspan='13'>Ingen deltakere registrert</td></tr>");
+        } else {
+          Object.entries(participants).forEach(([snr, p]) => {
+            let placement = '-';
+            if (p.finish != null && classPlacements[p.class]) {
+              const found = classPlacements[p.class].find(entry => entry.snr === snr);
+              placement = found ? found.rank : '-';
+            }
+            let timeDisplay = '-';
+            if (p.status === "Planlagt") {
+              let remainingSec = (Date.parse(p.start) - Date.now()) / 1000;
+              if (remainingSec < 0) remainingSec = 0;
+              timeDisplay = formatClockTimeFull(Date.parse(p.start)) + " (" + formatTime(remainingSec) + " til start)";
+            } else if (p.status === "I gang") {
+              timeDisplay = formatTime((Date.now() - Date.parse(p.start)) / 1000);
+            } else if (p.finish != null) {
+              timeDisplay = formatTime(p.finish);
+            }
+            const lapDiffs = p.laps.map((lap, i) => {
+              let diff = (lap - bestLapTimes[i]).toFixed(1);
+              return formatTime(lap) + " (+" + diff + "s)";
+            }).join("<br>");
+            const finishDiff = p.finish != null ? formatTime(p.finish) + " (+" + (p.finish - overallBestFinish).toFixed(1) + "s)" : "-";
+            rows.push(
+              `<tr>
+                <td>${placement}</td>
+                <td>${p.status === "Planlagt" ? `<button onclick="startIndividual(${snr})">Start</button>` : "-"}</td>
+                <td>${snr}</td>
+                <td>${p.name}</td>
+                <td>${p.class}</td>
+                <td>${p.status}</td>
+                <td>${p.status === "I gang" ? formatTime((Date.now()-Date.parse(p.start))/1000) : timeDisplay}</td>
+                <td class="shooting">${renderShooting(snr, 0)}</td>
+                <td class="shooting">${renderShooting(snr, 1)}</td>
+                <td>${getShootingArray(p).flat().filter(h => !h).length}</td>
+                <td>${p.laps.map(formatTime).join("<br>")}</td>
+                <td>${finishDiff}</td>
+                <td>${p.status === "I gang" ? `<button onclick="recordLap(${snr})">Rundetid</button> <button onclick="recordFinish(${snr})">Mål</button>` : "-"}</td>
+              </tr>`
+            );
+          });
+        }
+        document.getElementById("results").innerHTML = rows.join("");
+      }
+
+      async function updateTable() {
+        await fetchRemoteData();
+        updateLocalDisplay();
+      }
+
+      async function updateLiveClock() {
+        const now = new Date();
+        document.getElementById("liveClock").innerText = now.toLocaleTimeString();
+      }
+
+      setInterval(updateLiveClock, 1000);
+      updateLiveClock();
+      setInterval(updateTable, 5000);
+      setInterval(updateLocalDisplay, 1000);
+      updateTable();
+
+      async function addParticipant() {
+        const snr = document.getElementById("newStartNumber").value;
+        const name = document.getElementById("newParticipant").value;
+        const cls = document.getElementById("newParticipantClass").value;
+        if (!snr || !name || !cls) {
+          alert("Fyll ut alle felt!");
+          return;
+        }
+        const res = await supabaseClient.from("participants").select("*").eq("snr", snr);
+        if (res.data && res.data.length > 0) {
+          alert("Startnummer allerede brukt!");
+          return;
+        }
+        const newPart = {
+          snr: snr,
+          name: name,
+          class: cls,
+          start: null,
+          status: "Venter",
+          laps: [],
+          finish: null,
+          rawFinish: null,
+          shooting: JSON.stringify([Array(5).fill(false), Array(5).fill(false)])
+        };
+        const ins = await supabaseClient.from("participants").insert([newPart]);
+        if (ins.error) console.error("Feil ved lagring:", ins.error);
+        document.getElementById("newStartNumber").value = "";
+        document.getElementById("newParticipant").value = "";
+        updateTable();
+      }
+      window.addParticipant = addParticipant;
+
+      async function assignStartTimes() {
+        const firstTimeStr = document.getElementById("firstStartTime").value;
+        const intervalSec = parseInt(document.getElementById("startInterval").value);
+        if (!firstTimeStr || isNaN(intervalSec)) {
+          alert("Skriv inn gyldig første starttid og intervall!");
+          return;
+        }
+        const today = new Date();
+        const parts = firstTimeStr.split(":");
+        today.setHours(parseInt(parts[0]), parseInt(parts[1]), parts[2] ? parseInt(parts[2]) : 0, 0);
+        const firstStartMs = today.getTime();
+        const keys = Object.keys(participants).sort((a, b) => a - b);
+        for (let index = 0; index < keys.length; index++) {
+          const snr = keys[index];
+          let p = participants[snr];
+          if (p.status === "Venter") {
+            p.start = new Date(firstStartMs + index * intervalSec * 1000).toISOString();
+            p.status = "Planlagt";
+            const upd = await supabaseClient.from("participants")
+              .update({ start: p.start, status: p.status })
+              .eq("snr", snr);
+            if (upd.error) console.error("Feil ved oppdatering av starttid for snr", snr, upd.error);
+          }
+        }
+        updateTable();
+      }
+      window.assignStartTimes = assignStartTimes;
+
+      async function startMass() {
+        const now = new Date().toISOString();
+        for (const snr in participants) {
+          let p = participants[snr];
+          if (!p.timer && (p.status === "Venter" || p.status === "Planlagt")) {
+            p.start = now;
+            p.status = "I gang";
+            p.timer = setInterval(updateLocalDisplay, 1000);
+            const upd = await supabaseClient.from("participants")
+              .update({ start: p.start, status: p.status })
+              .eq("snr", snr);
+            if (upd.error) console.error("Feil ved startMass for snr", snr, upd.error);
+          }
+        }
+        updateTable();
+      }
+      window.startMass = startMass;
+
+      async function startIndividual(snr) {
+        let p = participants[snr];
+        if (p && !p.timer) {
+          p.start = new Date().toISOString();
+          p.status = "I gang";
+          p.timer = setInterval(updateLocalDisplay, 1000);
+          const upd = await supabaseClient.from("participants")
+            .update({ start: p.start, status: p.status })
+            .eq("snr", snr);
+          if (upd.error) console.error("Feil ved startIndividual for snr", snr, upd.error);
+          updateTable();
+        }
+      }
+      window.startIndividual = startIndividual;
+
+      async function recordLap(snr) {
+        let p = participants[snr];
+        if (p && p.start) {
+          const lapTime = (Date.now() - Date.parse(p.start)) / 1000;
+          p.laps.push(lapTime);
+          const upd = await supabaseClient.from("participants")
+            .update({ laps: p.laps })
+            .eq("snr", snr);
+          if (upd.error) console.error("Feil ved recordLap for snr", snr, upd.error);
+          updateTable();
+        }
+      }
+      window.recordLap = recordLap;
+
+      async function recordFinish(snr) {
+        let p = participants[snr];
+        if (p && p.start) {
+          if (p.timer) clearInterval(p.timer);
+          p.timer = null;
+          p.rawFinish = (Date.now() - Date.parse(p.start)) / 1000;
+          p.status = "Fullført";
+          updateFinalTime(snr);
+          const upd = await supabaseClient.from("participants")
+            .update({ rawFinish: p.rawFinish, status: p.status, finish: p.finish })
+            .eq("snr", snr);
+          if (upd.error) console.error("Feil ved recordFinish for snr", snr, upd.error);
+          console.log("recordFinish: snr", snr, "rawFinish:", p.rawFinish, "finish:", p.finish);
+          updateTable();
+        }
+      }
+      window.recordFinish = recordFinish;
+
+      async function toggleTarget(snr, shootIdx, idx) {
+        let p = participants[snr];
+        let shootingArr = getShootingArray(p);
+        shootingArr[shootIdx][idx] = !shootingArr[shootIdx][idx];
+        p.shooting = JSON.stringify(shootingArr);
+        if (p.rawFinish !== null) {
+          updateFinalTime(snr);
+          const upd = await supabaseClient.from("participants")
+            .update({ finish: p.finish })
+            .eq("snr", snr);
+          if (upd.error) console.error("Feil ved oppdatering av finish for snr", snr, upd.error);
+        }
+        const upd2 = await supabaseClient.from("participants")
+          .update({ shooting: p.shooting })
+          .eq("snr", snr);
+        if (upd2.error) console.error("Feil ved toggleTarget for snr", snr, upd2.error);
+        updateLocalDisplay();
+      }
+      window.toggleTarget = toggleTarget;
+
+      function updateFinalTime(snr) {
+        let p = participants[snr];
+        const penaltyPerMiss = parseFloat(document.getElementById("penaltyTime").value);
+        let shootingArr = getShootingArray(p);
+        const totalMisses = shootingArr.flat().filter(hit => !hit).length;
+        const penalty = totalMisses * penaltyPerMiss;
+        p.finish = p.rawFinish + penalty;
+      }
+      window.updateFinalTime = updateFinalTime;
+
+      function renderShooting(snr, shootIdx) {
+        let p = participants[snr];
+        let shootingArr = getShootingArray(p);
+        return shootingArr[shootIdx].map((hit, i) => {
+          return `<span class="target" onclick="toggleTarget(${snr},${shootIdx},${i})" style="color:${hit ? 'white' : 'black'}">&#9679;</span>`;
+        }).join("");
+      }
+      window.renderShooting = renderShooting;
+
+      async function customResetAll() {
+        const confirmed = await customConfirm("Er du sikker på at du vil nullstille alt?");
+        if (confirmed) {
+          for (const snr in participants) {
+            let p = participants[snr];
+            if (p.timer) clearInterval(p.timer);
+          }
+          participants = {};
+          const res = await supabaseClient.from("participants").delete().neq("snr", "");
+          if (res.error) console.error("Feil ved nullstilling:", res.error);
+          updateLocalDisplay();
+        }
+      }
+      window.customResetAll = customResetAll;
+
+      async function saveCSV() {
+        const res = await supabaseClient.from("participants").select("*").not("finish", "is", null);
+        if (res.error) {
+          console.error("Feil ved CSV-export:", res.error);
+          return;
+        }
+        let finishedData = res.data;
+        finishedData.sort((a, b) => a.finish - b.finish);
+        let csv = "Klasse,Plass,Startnummer,Navn,Tid,Bom\n";
+        let groups = {};
+        finishedData.forEach(p => {
+          if (!groups[p.class]) groups[p.class] = [];
+          groups[p.class].push(p);
+        });
+        for (const cls in groups) {
+          groups[cls].sort((a, b) => a.finish - b.finish);
+          const bestFinish = groups[cls][0].finish;
+          groups[cls].forEach((p, i) => {
+            const bom = getShootingArray(p).flat().filter(hit => !hit).length;
+            const diff = p.finish - bestFinish;
+            csv += `${cls},${i+1},${p.snr},${p.name},${formatTime(p.finish)} (+${diff.toFixed(1)}s),${bom}\n`;
+          });
+        }
+        const res2 = await supabaseClient.from("participants").select("*").is("finish", null);
+        if (res2.error) console.error(res2.error);
+        let unfinishedData = res2.data;
+        unfinishedData.sort((a, b) => a.snr - b.snr);
+        unfinishedData.forEach(p => {
+          const bom = getShootingArray(p).flat().filter(hit => !hit).length;
+          csv += `-,${p.snr},${p.name},${p.class},-,${bom}\n`;
+        });
+        let link = document.createElement("a");
+        link.href = "data:text/csv;charset=utf-8," + encodeURIComponent(csv);
+        link.download = "resultater.csv";
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+      window.saveCSV = saveCSV;
+
+      async function fetchParticipants() {
+        const res = await supabaseClient.from("participants").select("*");
+        if (res.error) console.error("Feil ved henting av deltakere:", res.error);
+        else {
+          participants = {};
+          res.data.forEach(record => {
+            record.laps = record.laps || [];
+            record.shooting = (typeof record.shooting === "string")
+              ? JSON.parse(record.shooting)
+              : record.shooting || [Array(5).fill(false), Array(5).fill(false)];
+            participants[record.snr] = record;
+          });
+          updateTable();
+        }
+      }
+      window.fetchParticipants = fetchParticipants;
+
+      async function updateTable() {
+        await fetchRemoteData();
+        updateLocalDisplay();
+      }
+      window.updateTable = updateTable;
+
+      updateTable();
+
+      // Knyt event listeners til knappene
+      document.getElementById("btnLagreDeltaker").addEventListener("click", addParticipant);
+      document.getElementById("btnTildelStarttider").addEventListener("click", assignStartTimes);
+      document.getElementById("btnNullstillAlt").addEventListener("click", customResetAll);
+      document.getElementById("btnLagreCSV").addEventListener("click", saveCSV);
+      document.getElementById("btnFellesstart").addEventListener("click", startMass);
+
+      function updateLiveClock() {
+        const now = new Date();
+        document.getElementById("liveClock").innerText = now.toLocaleTimeString();
+      }
+      setInterval(updateLiveClock, 1000);
+      updateLiveClock();
+      setInterval(updateTable, 5000);
+      setInterval(updateLocalDisplay, 1000);
+      updateTable();
+    };
+  </script>
+</body>
+</html>
